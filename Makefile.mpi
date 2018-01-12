@@ -1,0 +1,67 @@
+ARSIZE      = 100000000
+NTIMES      = 20
+SCALE_FLAGS = -DSTREAM_ARRAY_SIZE=$(ARSIZE) -DNTIMES=$(NTIMES)
+FLAGS       = -O3 -ffreestanding -openmp -mcmodel=medium -restrict -opt-streaming-stores always  \
+               -DVERBOSE $(SCALE_FLAGS)
+FLAGS       = -O3 -fopenmp $(SCALE_FLAGS)
+
+SRC_C       = stream_mpi.c
+SRC_F       = stream_mpi.f
+streamC_mpi: $(SRC_C)
+	$(CC) $< -o $@
+streamC_mpi_O2: $(SRC_C)
+	$(CC) -O2 $< -o $@
+streamC_mpi_O3: $(SRC_C)
+	$(CC) -O3 $< -o $@
+streamC_mpi_O2.100M: $(SRC_C)
+	$(CC) $(FLAGS_100M) -O2 $< -o $@
+streamC_mpi_O3.100M: $(SRC_C)
+	$(CC) $(FLAGS_100M) -O3 $< -o $@
+streamC_mpi_O2.500M: $(SRC_C)
+	$(CC) $(FLAGS_500M) -O2 $< -o $@
+streamC_mpi_O3.500M: $(SRC_C)
+	$(CC) $(FLAGS_500M) -O3 $< -o $@
+streamC_mpi_O2.1000M: $(SRC_C)
+	$(CC) $(FLAGS_1000M) -O2 $< -o $@
+streamC_mpi_O3.1000M: $(SRC_C)
+	$(CC) $(FLAGS_1000M) -O3 $< -o $@
+streamC_mpi_O2.2000M: $(SRC_C)
+	$(CC) $(FLAGS_2000M) -O2 $< -o $@
+streamC_mpi_O3.2000M: $(SRC_C)
+	$(CC) $(FLAGS_2000M) -O3 $< -o $@
+
+streamC_O2_omp: stream.c
+	$(CC) -fopenmp -O2 $< -o $@
+streamC_O3_omp: stream.c
+	$(CC) -fopenmp -O3 $< -o $@
+mysecond.o: mysecond.c
+streamF: stream.f mysecond.o
+	$(FC) $^ -o $@
+streamF_O2: stream.f mysecond.o
+	$(FC) -O2 $^ -o $@
+streamF_O3: stream.f mysecond.o
+	$(FC) -O3 $^ -o $@
+streamF_O2.100M: stream.f mysecond.o
+	$(FC) $(FLAGS_100M) -O2 $^ -o $@
+streamF_O3.100M: stream.f mysecond.o
+	$(FC) $(FLAGS_100M) -O3 $^ -o $@
+streamF_O2_omp: stream.f mysecond.o
+	$(FC) -fopenmp -O2 $^ -o $@
+streamF_O3_omp: stream.f mysecond.o
+	$(FC) -fopenmp -O3 $^ -o $@
+
+PROGRAMS = streamC streamC_O3 streamC_O2 streamC_O3_omp streamC_O2_omp \
+	   streamF streamF_O2 streamF_O3 streamF_O3_omp streamF_O2_omp \
+	   streamC_O3.100M streamC_O2.100M streamF_O2.100M streamF_O3.100M
+EXEX := 
+
+all: $(PROGRAMS)
+clean:
+	rm stream[a-Z]* *.o
+check: $(PROGRAMS)
+	for prog in $(PROGRAMS); do \
+	  echo "#================================================================================"; \
+	  echo $$prog; \
+	    $(EXEC) ./$$prog  > $${prog}.log; \
+	  done
+
