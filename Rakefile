@@ -223,7 +223,7 @@ taskNameGen = lambda {|exe,mpi,omp,prefix| "#{prefix}_#{exe}_mpi.eq.#{mpi}_omp.e
       CLEAN.include(taskName)
 
       desc "Run #{exe} with mpi-tasks = #{mpi}/nthreads = #{omp}"
-      task taskName => exe do |t|
+      file taskName => exe do |t|
          sh "echo #{hybridCheck(mpi,omp,@conf[:MPIRUN],exe)} > #{taskName}"
       end
 
@@ -250,3 +250,7 @@ task :checkOmp    => @checkTasks[:omp]
 task :checkMpi    => @checkTasks[:mpi]
 task :checkHybrid => @checkTasks[:hybrid]
 task :check       => [:checkOmp,:checkMpi,:checkHybrid,:checkPlain]
+desc "Create a source tar-ball"
+task :archive do
+  sh "git archive --prefix=stream/ -o stream.tar.gz master"
+end
