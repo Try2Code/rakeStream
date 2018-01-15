@@ -40,6 +40,10 @@ def ext(fn, newext)
 end
 def dbg(*args); args.each {|arg| pp arg}; end
 @filePattern = '*.{F,F90,f,h,c,inc,f90}'
+
+file '.logs' do |t|
+  sh "mkdir #{t.name}"
+end
 #===========================================================
 # main targets
 
@@ -111,25 +115,25 @@ end
 def plainCheck(exe)
   cmd     = "./#{exe}"
   puts cmd if Rake.verbose
-  memRate = IO.popen(cmd).readlines.grep4Triad
+  memRate = IO.popen(cmd + " | tee .logs/#{exe}.log").readlines.grep4Triad
   return memRate
 end
-def ompCheck(nThreads, exe)
-  cmd     = "OMP_NUM_THREADS=#{nThreads} ./#{exe}"
+def ompCheck(omp, exe)
+  cmd     = "OMP_NUM_THREADS=#{omp} ./#{exe}"
   puts cmd if Rake.verbose
-  memRate = IO.popen(cmd).readlines.grep4Triad
+  memRate = IO.popen(cmd + " | tee .logs/#{exe}_omp.eq.#{omp}.log").readlines.grep4Triad
   return memRate
 end
-def mpiCheck(nTasks,mpirun,exe)
-  cmd     = "#{mpirun} -np #{nTasks} ./#{exe}"
+def mpiCheck(mpi,mpirun,exe)
+  cmd     = "#{mpirun} -np #{mpi} ./#{exe}"
   puts cmd if Rake.verbose
-  memRate = IO.popen(cmd).readlines.grep4Triad
+  memRate = IO.popen(cmd + " | tee .logs/#{exe}_mpi.eq.#{mpi}.log").readlines.grep4Triad
   return memRate
 end
-def hybridCheck(nTasks,nThreads, mpirun, exe)
-  cmd     = "OMP_NUM_THREADS=#{nThreads} #{mpirun} -np #{nTasks} ./#{exe}"
+def hybridCheck(mpi,omp, mpirun, exe)
+  cmd     = "OMP_NUM_THREADS=#{omp} #{mpirun} -np #{mpi} ./#{exe}"
   puts cmd if Rake.verbose
-  memRate = IO.popen(cmd).readlines.grep4Triad
+  memRate = IO.popen(cmd + " | tee .logs/#{exe}_mpi.eq.#{mpi}_omp.eq.#{omp}.log").readlines.grep4Triad
   return memRate
 end
 def scalingList(max)
