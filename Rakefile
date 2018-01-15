@@ -47,7 +47,7 @@ OPT_FLAGS  = %w[02 03]
 ArraySizes = [1,5,10,15,20].map {|i| i*=10000000}
 BaseBins   = %w[stream stream_mpi]
 
-allPrograms = []
+@allPrograms = []
 BaseBins.each {|binary|
   useMPI = /mpi$/.match(binary)
   binaryName = binary
@@ -78,22 +78,70 @@ BaseBins.each {|binary|
             end
           end
           CLEAN.include(binaryName)
-          allPrograms << binaryName
+          @allPrograms << binaryName
         }
       }
     }
   }
 }
+@withMpi    = @allPrograms.grep(/mpi/)
+@withOpenmp = @allPrograms.grep(/OpenMPtrue/)
+@openmpOnly = @withOpenmp - @withMpi
+@mpiOnly    = @withMpi - @withOpenmp
+@hybrid     = @withMpi & @withOpenmp
+@remaining  = @allPrograms - @withOpenmp - @withMpi
 
-task :all => allPrograms
+desc "Build all executables"
+task :all => @allPrograms
 
+# collect the memory rates
+@memRates = {}
+class Array; def grep4Triad; self.grep(/^Triad/).first.split[1]; end; end
+def plainCheck(exe)
+  memRate = IO.popen("./#{exe}").readlines.grep4Triad
+  return memRate
+end
+def ompCheck(nThreads, exe)
+  memRate = IO.popen("OMP_NUM_THREADS=#{nThreads} #{exe}").readlines.grep4Triad
+  return memRate
+end
+def mpiCheck(nTasks, mpirun,exe)
+  memRate = IO.popen("#{mpirun} -np #{nTasks} #{exe}").readlines.grep4Triad
+  return memRate
+end
+def hynridCheck(nTasks,nThreads, mpirun, exe)
+  memRate = IO.popen("OMP_NUM_THREADS=#{nThreads} #{mpirun} -np #{nTasks} #{exe}").readlines.grep4Triad
+  return memRate
+end
+def scalingList(max)
+  list = [max]
+  halfWay = 0.584962500721156
+
+  Math.log2(max).floor.downto(1) {|n|
+    list << 2**n
+    list << (2**(n-1+halfWay)).to_i
+  }
+  list
+end
+
+@remaining.each {|exe|
+  desc "Check #{exe}"
+  task "check_#{exe}" do
+    @memRate[exe] = plainCheck(exe)
+  end
+}
+@openmpOnly.each {|exe|
+
+}
+
+task :checkTasklist do
+  pp scalingList(96)
+  pp scalingList(108)
+  pp scalingList(12)
+  pp scalingList(48)
+  pp scalingList(34)
+end
 task :check do
-  withMpi    = allPrograms.grep(/mpi/)
-  withOpenmp = allPrograms.grep(/OpenMPtrue/)
-  openmpOnly = withOpenmp - withMpi
-  mpiOnly    = withMpi - withOpenmp
-  hybrid     = withMpi & withOpenmp
-  remaining  = allPrograms - withOpenmp - withMpi
 
   pp hybrid
   return
@@ -105,6 +153,7 @@ task :check do
   }
 
   # check mpi-only oprogram
+
   # check openmp-only programs
   # check hybrid executables
 end
