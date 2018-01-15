@@ -2,15 +2,20 @@ require 'pp'
 require 'rake/clean'
 require 'rake/loaders/makefile'
 #===========================================================
+Rake.verbose(ENV.has_key?('V'))
+#===========================================================
 # general setup for building
 @defaults  = {
   CC: 'gcc',
   FC: 'gfortran',
-  F77: 'gfortran'
+  F77: 'gfortran',
+  OMP_THREADS: 4,
+    MPI_TASKS: 4,
+    MPIRUN: 'mpirun'
 }
 
 @conf = {}
-%w[CC CXX FC F77 CFLAGS CPPFLAGS CXX CXXFLAGS FCFLAGS LDFLAGS LIBS].each {|key| 
+%w[CC CXX FC F77 CFLAGS CPPFLAGS CXX CXXFLAGS FCFLAGS LDFLAGS LIBS OMP_THREADS MPI_TASKS MPIRUN].each {|key| 
   keySym = key.to_sym
   @conf[keySym] = ENV.has_key?(key) ? ENV[key] : (@defaults.has_key?(keySym) ? @defaults[keySym] : '')
 }
@@ -96,25 +101,45 @@ task :all => @allPrograms
 
 # collect the memory rates
 @memRates = {}
-class Array; def grep4Triad; self.grep(/^Triad/).first.split[1]; end; end
+class Array
+  def grep4Triad
+    needle = self.grep(/^Triad/)
+    return 0.0 if needle.empty?
+    return needle.first.split[1].to_f
+  end
+end
 def plainCheck(exe)
-  memRate = IO.popen("./#{exe}").readlines.grep4Triad
+  cmd     = "./#{exe}"
+  puts cmd if Rake.verbose
+  memRate = IO.popen(cmd).readlines.grep4Triad
   return memRate
 end
 def ompCheck(nThreads, exe)
-  memRate = IO.popen("OMP_NUM_THREADS=#{nThreads} #{exe}").readlines.grep4Triad
+  cmd     = "OMP_NUM_THREADS=#{nThreads} ./#{exe}"
+  puts cmd if Rake.verbose
+  memRate = IO.popen(cmd).readlines.grep4Triad
   return memRate
 end
-def mpiCheck(nTasks, mpirun,exe)
-  memRate = IO.popen("#{mpirun} -np #{nTasks} #{exe}").readlines.grep4Triad
+def mpiCheck(nTasks,mpirun,exe)
+  cmd     = "#{mpirun} -np #{nTasks} ./#{exe}"
+  puts cmd if Rake.verbose
+  memRate = IO.popen(cmd).readlines.grep4Triad
   return memRate
 end
-def hynridCheck(nTasks,nThreads, mpirun, exe)
-  memRate = IO.popen("OMP_NUM_THREADS=#{nThreads} #{mpirun} -np #{nTasks} #{exe}").readlines.grep4Triad
+def hybridCheck(nTasks,nThreads, mpirun, exe)
+  cmd     = "OMP_NUM_THREADS=#{nThreads} #{mpirun} -np #{nTasks} ./#{exe}"
+  puts cmd if Rake.verbose
+  memRate = IO.popen(cmd).readlines.grep4Triad
   return memRate
 end
 def scalingList(max)
-  list = [max]
+
+  return [1] if 1 == max
+
+  maxLog2 = Math.log2(max)
+
+  list = []
+  list << max  if maxLog2.to_i != maxLog2
   halfWay = 0.584962500721156
 
   Math.log2(max).floor.downto(1) {|n|
@@ -123,37 +148,101 @@ def scalingList(max)
   }
   list
 end
-
+# create targest for checking all binaries
+@memRates   = {}
+@checkTasks = {plain: [],omp: [], mpi: [], hybrid: []}
+# plain
 @remaining.each {|exe|
-  desc "Check #{exe}"
-  task "check_#{exe}" do
-    @memRate[exe] = plainCheck(exe)
+  taskName = "run_#{exe}"
+  CLEAN.include(taskName)
+
+  desc "Run #{exe}"
+  file taskName => exe  do |t|
+    rate = plainCheck(exe)
+    sh "echo #{rate} > #{taskName}"
   end
+  task "check_#{exe}" => taskName do
+    rate = File.open(taskName).read.chomp.to_f
+    (@memRates[exe] ||= []) << rate
+  end
+  @checkTasks[:plain] << "check_#{exe}"
 }
+# openmp
+taskNameGen = lambda {|exe,omp,prefix| "#{prefix}_#{exe}_omp.eq.#{omp}"}
 @openmpOnly.each {|exe|
+  scalingList(@conf[:OMP_THREADS].to_f).each {|omp|
+    taskName = taskNameGen.call(exe,omp,'run')
+    CLEAN.include(taskName)
 
-}
+    desc "Run #{exe} with nthreads = #{omp}"
+    file taskName => exe do |t|
+      rate = ompCheck(omp,exe)
+      sh "echo #{rate} > #{taskName}"
+    end
 
-task :checkTasklist do
-  pp scalingList(96)
-  pp scalingList(108)
-  pp scalingList(12)
-  pp scalingList(48)
-  pp scalingList(34)
-end
-task :check do
-
-  pp hybrid
-  return
-
-  #run plain program 
-  remaining.each {|prog|
-    puts "# #{prog} ".ljust(80,'=')
-    sh "./#{prog} 2>&1 | tee LOG.#{prog} | grep Triad > TRI.#{prog}"
+    @checkTasks[:omp] << taskNameGen.call(exe,omp,'check')
+    desc "Check results from #{exe}"
+    task taskNameGen.call(exe,omp,'check') => taskName do
+      rate = File.open(taskName).read.chomp.to_f
+      puts [rate,taskName].join("\t") if Rake.verbose
+      (@memRates[exe] ||= []) << [omp,rate]
+    end
   }
+}
+# mpi
+taskNameGen = lambda {|exe,mpi,prefix| "#{prefix}_#{exe}_mpi.eq.#{mpi}"}
+@mpiOnly.each {|exe|
+  scalingList(@conf[:MPI_TASKS].to_f).each {|mpi|
+    taskName = taskNameGen.call(exe,mpi,'run')
+    CLEAN.include(taskName)
 
-  # check mpi-only oprogram
+    desc "Run #{exe} with mpi-tasks = #{mpi}"
+    file taskName => exe do |t|
+      sh "echo #{mpiCheck(mpi,@conf[:MPIRUN],exe)} > #{taskName}"
+    end
 
-  # check openmp-only programs
-  # check hybrid executables
+    @checkTasks[:mpi] << taskNameGen.call(exe,mpi,'check')
+    desc "Check results from #{exe} with mpi-taskName = #{mpi}"
+    task taskNameGen.call(exe,mpi,'check') => taskName do
+      rate = File.open(taskName).read.chomp.to_f
+      puts [exe,mpi,rate].reverse.join("\t") if Rake.verbose
+      (@memRates[exe] ||= []) << [mpi,rate]
+    end
+  }
+}
+# hybrid
+taskNameGen = lambda {|exe,mpi,omp,prefix| "#{prefix}_#{exe}_mpi.eq.#{mpi}_omp.eq.#{omp}"}
+@hybrid.each {|exe|
+  scalingList(@conf[:MPI_TASKS].to_f).each {|mpi|
+    scalingList(@conf[:OMP_THREADS].to_f).each {|omp|
+      taskName = taskNameGen.call(exe,mpi,omp, "run")
+      CLEAN.include(taskName)
+
+      desc "Run #{exe} with mpi-tasks = #{mpi}/nthreads = #{omp}"
+      task taskName => exe do |t|
+         sh "echo #{hybridCheck(mpi,omp,@conf[:MPIRUN],exe)} > #{taskName}"
+      end
+
+      @checkTasks[:hybrid] << taskNameGen.call(exe,mpi,omp,'check')
+      desc "Check results from hybrid run with #{exe}: mpi = #{mpi}, omp = #{omp}"
+      task taskNameGen.call(exe,mpi,omp,'check') => taskName do
+        rate = File.open(taskName).read.chomp.to_f
+        puts [exe,mpi,omp,rate].reverse.join("\t") if Rake.verbose
+        (@memRates[exe] ||= []) << [mpi,omp,rate]
+      end
+    }
+  }
+}
+task :checkTasklist do
+  %w[96 108 12 48 34 18 16 8 4 2 1].each {|n| pp scalingList(n.to_i) }
 end
+task :checkConf do
+  pp @conf
+end
+task :checkPlain  => @checkTasks[:plain] do |t|
+  pp @memRates
+end
+task :checkOmp    => @checkTasks[:omp]
+task :checkMpi    => @checkTasks[:mpi]
+task :checkHybrid => @checkTasks[:hybrid]
+task :check       => [:checkOmp,:checkMpi,:checkHybrid,:checkPlain]
