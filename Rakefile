@@ -1,6 +1,6 @@
-require 'pp'
 require 'rake/clean'
 require 'rake/loaders/makefile'
+require 'unifiedPlot'
 #===========================================================
 Rake.verbose(ENV.has_key?('V'))
 #===========================================================
@@ -9,16 +9,19 @@ Rake.verbose(ENV.has_key?('V'))
   CC: 'gcc',
   FC: 'gfortran',
   F77: 'gfortran',
+  MPICC: 'mpicc',
+  MPIF90: 'mpif90',
   OMP_THREADS: 4,
     MPI_TASKS: 4,
     MPIRUN: 'mpirun'
 }
 
 @conf = {}
-%w[CC CXX FC F77 CFLAGS CPPFLAGS CXX CXXFLAGS FCFLAGS LDFLAGS LIBS OMP_THREADS MPI_TASKS MPIRUN].each {|key| 
+%w[CC CXX FC F77 MPICC MPIF90 CFLAGS CPPFLAGS CXX CXXFLAGS FCFLAGS LDFLAGS LIBS OMP_THREADS MPI_TASKS MPIRUN].each {|key|
   keySym = key.to_sym
   @conf[keySym] = ENV.has_key?(key) ? ENV[key] : (@defaults.has_key?(keySym) ? @defaults[keySym] : '')
 }
+%w[OMP_THREADS MPI_TASKS].each {|k| @conf[k.to_sym] = @conf[k.to_sym].to_i}
 
 case @conf[:CC]
 when 'gcc'
@@ -57,6 +60,7 @@ ArraySizes = [1,5,10,15,20].map {|i| i*=10000000}
 BaseBins   = %w[stream stream_mpi]
 
 @allPrograms = []
+@binDb       = {}
 BaseBins.each {|binary|
   useMPI = /mpi$/.match(binary)
   binaryName = binary
@@ -68,7 +72,7 @@ BaseBins.each {|binary|
           binaryName = [binary,lang,"OpenMP#{useOpenMP.to_s}",optflag,arySize].join('_')
 
           if useMPI then
-            comp = ('C' == lang) ? 'mpicc' : 'mpif90'
+            comp = ('C' == lang) ? @conf[:MPICC] : @conf[:MPIF90]
           else
             comp = ('C' == lang) ? @conf[:CC] : @conf[:FC]
           end
@@ -88,6 +92,7 @@ BaseBins.each {|binary|
           end
           CLEAN.include(binaryName)
           @allPrograms << binaryName
+          @binDb[binaryName] = {lang: lang, useMPI: useMPI, optflag: optflag, arySize: arySize}
         }
       }
     }
@@ -174,7 +179,7 @@ end
 # openmp
 taskNameGen = lambda {|exe,omp,prefix| "#{prefix}_#{exe}_omp.eq.#{omp}"}
 @openmpOnly.each {|exe|
-  scalingList(@conf[:OMP_THREADS].to_f).each {|omp|
+  scalingList(@conf[:OMP_THREADS]).each {|omp|
     taskName = taskNameGen.call(exe,omp,'run')
     CLEAN.include(taskName)
 
@@ -218,7 +223,7 @@ taskNameGen = lambda {|exe,mpi,prefix| "#{prefix}_#{exe}_mpi.eq.#{mpi}"}
 taskNameGen = lambda {|exe,mpi,omp,prefix| "#{prefix}_#{exe}_mpi.eq.#{mpi}_omp.eq.#{omp}"}
 @hybrid.each {|exe|
   scalingList(@conf[:MPI_TASKS].to_f).each {|mpi|
-    scalingList(@conf[:OMP_THREADS].to_f).each {|omp|
+    scalingList(@conf[:OMP_THREADS]).each {|omp|
       taskName = taskNameGen.call(exe,mpi,omp, "run")
       CLEAN.include(taskName)
 
@@ -244,11 +249,145 @@ task :checkConf do
   pp @conf
 end
 task :checkPlain  => @checkTasks[:plain] do |t|
+# pp @memRates
+# pp @binDb.values_at(*@memRates.keys)
+  @data = {}
+  # compare arySize in differen optflags
+  %w[C F].each {|lang|
+    @data[lang] = {}
+    OPT_FLAGS.each {|optflag|
+      @data[lang][optflag] = []
+      @memRates.each {|exe,rate|
+        if (@binDb[exe][:lang] == lang and @binDb[exe][:optflag] == optflag) then
+          @data[lang][optflag] << [@binDb[exe][:arySize],rate[0]]
+        end
+      }
+    }
+  }
+
+  pp @data['C']['02']
+  pp @data['F']['02']
+  # compare fortran with different opt levels
+  data2plot = []
+  f02 = @data['F']['02'].transpose
+  f03 = @data['F']['03'].transpose
+  data2plot << {x: f02[0],y: f02[1],title: 'Fortran version, opt: -O2'}
+  data2plot << {x: f03[0],y: f03[1],title: 'Fortran version, opt: -O3'}
+  # compare c versions
+  c02 = @data['C']['02'].transpose
+  c03 = @data['C']['03'].transpose
+  data2plot << {x: c02[0],y: c02[1],title: 'C version, opt: -O2'}
+  data2plot << {x: c03[0],y: c03[1],title: 'C version, opt: -O3'}
+
+  UnifiedPlot.linePlot(data2plot,oName: "#{t.name}_FvsC_noOpenMP_noMPI",
+                       oType: 'png',
+                       :plotConf => {:title => "Stream Benchmark, Fortran and C versions, host:#{`hostname`.chomp}",
+                                     xlabel: "Array Size",ylabel: "Memory Bandwidth [MB/s]",
+                                     yrange: "[8000:12000]"}
+                      )
+end
+task :checkOmp    => @checkTasks[:omp] do |t|
+  pp @memRates
+  @data={}
+  %w[C F].each {|lang|
+    @data[lang] = {}
+    OPT_FLAGS.each {|optflag|
+      @data[lang][optflag] = []
+      @memRates.each {|exe,rate|
+        if (@binDb[exe][:lang] == lang and @binDb[exe][:optflag] == optflag) then
+          @data[lang][optflag] << [@binDb[exe][:arySize],rate.transpose]
+        end
+      }
+    }
+  }
+  pp @data
+
+  f02 = @data['F']['02'].transpose
+  f03 = @data['F']['03'].transpose
+  # compare c versions
+  c02 = @data['C']['02'].transpose
+  c03 = @data['C']['03'].transpose
+  pp c03
+  pp c03[1][0]
+  data2plot = []
+  f02[0].each_with_index {|arySize,i|
+    data2plot << {x: f02[1][i][0],y: f02[1][i][1],title: "arraySize #{arySize}",style: 'linespoints lw 2'}
+  }
+  UnifiedPlot.linePlot(data2plot,oName: "#{t.name}_F_02_omp",oType: 'png',
+                        plotConf: {title: 'OpenMP-Test: Fortran version, opt: -O2',key: 'bot'})
+  data2plot= []
+  f03[0].each_with_index {|arySize,i|
+    data2plot << {x: f03[1][i][0],y: f03[1][i][1],title: "arraySize #{arySize}",style: 'linespoints lw 2'}
+  }
+  UnifiedPlot.linePlot(data2plot,oName: "#{t.name}_F_03_omp",oType: 'png',
+                        plotConf: {title: 'OpenMP-Test: Fortran version, opt: -O3',key: 'bot'})
+  data2plot.clear
+  c02[0].each_with_index {|arySize,i|
+    data2plot << {x: c02[1][i][0],y: c02[1][i][1],title: "arraySize #{arySize}",style: 'linespoints lw 2'}
+  }
+  UnifiedPlot.linePlot(data2plot,oName: "#{t.name}_C_02_omp",oType: 'png',
+                        plotConf: {title: 'OpenMP-Test: C version, opt: -O2',key: 'bot'})
+  data2plot.clear
+  c03[0].each_with_index {|arySize,i|
+    data2plot << {x: c03[1][i][0],y: c03[1][i][1],title: "arraySize #{arySize}",style: 'linespoints lw 2'}
+  }
+  pp data2plot
+  UnifiedPlot.linePlot(data2plot,oName: "#{t.name}_C_03_omp",oType: 'png',
+                        plotConf: {title: 'OpenMP-Test: C version, opt: -O3',key: 'bot'})
+  data2plot.clear
+end
+task :checkMpi    => @checkTasks[:mpi] do |t|
+  pp @memRates
+  @data={}
+  %w[C F].each {|lang|
+    @data[lang] = {}
+    OPT_FLAGS.each {|optflag|
+      @data[lang][optflag] = []
+      @memRates.each {|exe,rate|
+        if (@binDb[exe][:lang] == lang and @binDb[exe][:optflag] == optflag) then
+          @data[lang][optflag] << [@binDb[exe][:arySize],rate.transpose]
+        end
+      }
+    }
+  }
+  pp @data
+  f02 = @data['F']['02'].transpose
+  f03 = @data['F']['03'].transpose
+  # compare c versions
+  c02 = @data['C']['02'].transpose
+  c03 = @data['C']['03'].transpose
+  pp c03
+  pp c03[1][0]
+  data2plot = []
+  f02[0].each_with_index {|arySize,i|
+    data2plot << {x: f02[1][i][0],y: f02[1][i][1],title: "arraySize #{arySize}",style: 'linespoints lw 2'}
+  }
+  UnifiedPlot.linePlot(data2plot,oName: "#{t.name}_F_02_mpi",oType: 'png',
+                        plotConf: {title: 'MPI-Test: Fortran version, opt: -O2',key: 'bot'})
+  data2plot= []
+  f03[0].each_with_index {|arySize,i|
+    data2plot << {x: f03[1][i][0],y: f03[1][i][1],title: "arraySize #{arySize}",style: 'linespoints lw 2'}
+  }
+  UnifiedPlot.linePlot(data2plot,oName: "#{t.name}_F_03_mpi",oType: 'png',
+                        plotConf: {title: 'MPI-Test: Fortran version, opt: -O3',key: 'bot'})
+  data2plot.clear
+  c02[0].each_with_index {|arySize,i|
+    data2plot << {x: c02[1][i][0],y: c02[1][i][1],title: "arraySize #{arySize}",style: 'linespoints lw 2'}
+  }
+  UnifiedPlot.linePlot(data2plot,oName: "#{t.name}_C_02_mpi",oType: 'png',
+                        plotConf: {title: 'MPI-Test: C version, opt: -O2',key: 'bot'})
+  data2plot.clear
+  c03[0].each_with_index {|arySize,i|
+    data2plot << {x: c03[1][i][0],y: c03[1][i][1],title: "arraySize #{arySize}",style: 'linespoints lw 2'}
+  }
+  pp data2plot
+  UnifiedPlot.linePlot(data2plot,oName: "#{t.name}_C_03_mpi",oType: 'png',
+                        plotConf: {title: 'MPI-Test: C version, opt: -O3',key: 'bot'})
+  data2plot.clear
+end
+task :checkHybrid => @checkTasks[:hybrid] do |t|
   pp @memRates
 end
-task :checkOmp    => @checkTasks[:omp]
-task :checkMpi    => @checkTasks[:mpi]
-task :checkHybrid => @checkTasks[:hybrid]
 task :check       => [:checkOmp,:checkMpi,:checkHybrid,:checkPlain]
 desc "Create a source tar-ball"
 task :archive do
