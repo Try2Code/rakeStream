@@ -1,3 +1,4 @@
+require 'pp'
 require 'rake/clean'
 require 'rake/loaders/makefile'
 require 'unifiedPlot'
@@ -191,7 +192,7 @@ taskNameGen = lambda {|exe,omp,prefix| "#{prefix}_#{exe}_omp.eq.#{omp}"}
 
     @checkTasks[:omp] << taskNameGen.call(exe,omp,'check')
     desc "Check results from #{exe}"
-    task taskNameGen.call(exe,omp,'check') => taskName do
+    task taskNameGen.call(exe,omp,'check') do #=> taskName do
       rate = File.open(taskName).read.chomp.to_f
       puts [rate,taskName].join("\t") if Rake.verbose
       (@memRates[exe] ||= []) << [omp,rate]
@@ -212,7 +213,7 @@ taskNameGen = lambda {|exe,mpi,prefix| "#{prefix}_#{exe}_mpi.eq.#{mpi}"}
 
     @checkTasks[:mpi] << taskNameGen.call(exe,mpi,'check')
     desc "Check results from #{exe} with mpi-taskName = #{mpi}"
-    task taskNameGen.call(exe,mpi,'check') => taskName do
+    task taskNameGen.call(exe,mpi,'check') do #=> taskName do
       rate = File.open(taskName).read.chomp.to_f
       puts [exe,mpi,rate].reverse.join("\t") if Rake.verbose
       (@memRates[exe] ||= []) << [mpi,rate]
@@ -234,7 +235,7 @@ taskNameGen = lambda {|exe,mpi,omp,prefix| "#{prefix}_#{exe}_mpi.eq.#{mpi}_omp.e
 
       @checkTasks[:hybrid] << taskNameGen.call(exe,mpi,omp,'check')
       desc "Check results from hybrid run with #{exe}: mpi = #{mpi}, omp = #{omp}"
-      task taskNameGen.call(exe,mpi,omp,'check') => taskName do
+      task taskNameGen.call(exe,mpi,omp,'check') do #=> taskName do
         rate = File.open(taskName).read.chomp.to_f
         puts [exe,mpi,omp,rate].reverse.join("\t") if Rake.verbose
         (@memRates[exe] ||= []) << [mpi,omp,rate]
@@ -286,107 +287,97 @@ task :checkPlain  => @checkTasks[:plain] do |t|
                                      yrange: "[8000:12000]"}
                       )
 end
-task :checkOmp    => @checkTasks[:omp] do |t|
-  pp @memRates
-  @data={}
+def collectData(memRates,binDb)
+  data={}
   %w[C F].each {|lang|
-    @data[lang] = {}
+    data[lang] = {}
     OPT_FLAGS.each {|optflag|
-      @data[lang][optflag] = []
-      @memRates.each {|exe,rate|
-        if (@binDb[exe][:lang] == lang and @binDb[exe][:optflag] == optflag) then
-          @data[lang][optflag] << [@binDb[exe][:arySize],rate.transpose]
+      data[lang][optflag] = []
+      memRates.each {|exe,rate|
+        if (binDb[exe][:lang] == lang and binDb[exe][:optflag] == optflag) then
+          data[lang][optflag] << [binDb[exe][:arySize],rate.transpose]
         end
       }
     }
   }
-  pp @data
-
-  f02 = @data['F']['02'].transpose
-  f03 = @data['F']['03'].transpose
+  data
+end
+def nonHybridPlots(data,name,type)
+  f02 = data['F']['02'].transpose
+  f03 = data['F']['03'].transpose
   # compare c versions
-  c02 = @data['C']['02'].transpose
-  c03 = @data['C']['03'].transpose
+  c02 = data['C']['02'].transpose
+  c03 = data['C']['03'].transpose
   pp c03
   pp c03[1][0]
   data2plot = []
+  title = ('omp' == type) ? 'OpenMP' : 'MPI'
   f02[0].each_with_index {|arySize,i|
     data2plot << {x: f02[1][i][0],y: f02[1][i][1],title: "arraySize #{arySize}",style: 'linespoints lw 2'}
   }
-  UnifiedPlot.linePlot(data2plot,oName: "#{t.name}_F_02_omp",oType: 'png',
-                        plotConf: {title: 'OpenMP-Test: Fortran version, opt: -O2',key: 'bot'})
+  UnifiedPlot.linePlot(data2plot,oName: "#{name}_F_02_#{type}",oType: 'png',
+                        plotConf: {title: "#{title}-Test: Fortran version, opt: -O2",key: 'bot'})
   data2plot= []
   f03[0].each_with_index {|arySize,i|
     data2plot << {x: f03[1][i][0],y: f03[1][i][1],title: "arraySize #{arySize}",style: 'linespoints lw 2'}
   }
-  UnifiedPlot.linePlot(data2plot,oName: "#{t.name}_F_03_omp",oType: 'png',
-                        plotConf: {title: 'OpenMP-Test: Fortran version, opt: -O3',key: 'bot'})
+  UnifiedPlot.linePlot(data2plot,oName: "#{name}_F_03_#{type}",oType: 'png',
+                        plotConf: {title: "#{title}-Test: Fortran version, opt: -O3",key: 'bot'})
   data2plot.clear
   c02[0].each_with_index {|arySize,i|
     data2plot << {x: c02[1][i][0],y: c02[1][i][1],title: "arraySize #{arySize}",style: 'linespoints lw 2'}
   }
-  UnifiedPlot.linePlot(data2plot,oName: "#{t.name}_C_02_omp",oType: 'png',
-                        plotConf: {title: 'OpenMP-Test: C version, opt: -O2',key: 'bot'})
+  UnifiedPlot.linePlot(data2plot,oName: "#{name}_C_02_#{type}",oType: 'png',
+                        plotConf: {title: "#{title}-Test: C version, opt: -O2",key: 'bot'})
   data2plot.clear
   c03[0].each_with_index {|arySize,i|
     data2plot << {x: c03[1][i][0],y: c03[1][i][1],title: "arraySize #{arySize}",style: 'linespoints lw 2'}
   }
   pp data2plot
-  UnifiedPlot.linePlot(data2plot,oName: "#{t.name}_C_03_omp",oType: 'png',
-                        plotConf: {title: 'OpenMP-Test: C version, opt: -O3',key: 'bot'})
+  UnifiedPlot.linePlot(data2plot,oName: "#{name}_C_03_#{type}",oType: 'png',
+                        plotConf: {title: "#{title}-Test: C version, opt: -O3",key: 'bot'})
   data2plot.clear
 end
+task :checkOmp    => @checkTasks[:omp] do |t|
+  data = collectData(@memRates,@binDb)
+  nonHybridPlots(data,t.name,'omp')
+end
 task :checkMpi    => @checkTasks[:mpi] do |t|
-  pp @memRates
-  @data={}
-  %w[C F].each {|lang|
-    @data[lang] = {}
-    OPT_FLAGS.each {|optflag|
-      @data[lang][optflag] = []
-      @memRates.each {|exe,rate|
-        if (@binDb[exe][:lang] == lang and @binDb[exe][:optflag] == optflag) then
-          @data[lang][optflag] << [@binDb[exe][:arySize],rate.transpose]
-        end
-      }
-    }
+  data = collectData(@memRates,@binDb)
+  nonHybridPlots(data,t.name,'mpi')
+end
+def hybridPlot(data,opt,lang,name)
+  sizes = data[0]
+  sizes.each_with_index {|size,i|
+    pp size
+    mpi  = data[1][i][0]
+    omp  = data[1][i][1]
+    rate = data[1][i][2]
+    _d = {}
+    _d[:x] = mpi
+    _d[:y] = omp
+    _d[:z] = rate
+    pp rate
+    UnifiedPlot.heatMap(_d,oName: "#{name}_#{lang}_#{opt}_hybrid_arraySize#{size}",oType: 'png',
+                        plotConf: {title: "Hybrid-Test: #{lang} version -#{opt}, ArraySize:#{size}",\
+                                   xlabel: "MPI tasks",ylabel: "OpenMP threads",
+                                   xtics: '1',ytics: '1',xsize: 1600,cbrange: "[0:800000]",
+                                   xrange: "[0.5:#{mpi.max+0.5}]", yrange: "[0.5:#{omp.max+0.5}]"})
   }
-  pp @data
-  f02 = @data['F']['02'].transpose
-  f03 = @data['F']['03'].transpose
-  # compare c versions
-  c02 = @data['C']['02'].transpose
-  c03 = @data['C']['03'].transpose
-  pp c03
-  pp c03[1][0]
-  data2plot = []
-  f02[0].each_with_index {|arySize,i|
-    data2plot << {x: f02[1][i][0],y: f02[1][i][1],title: "arraySize #{arySize}",style: 'linespoints lw 2'}
-  }
-  UnifiedPlot.linePlot(data2plot,oName: "#{t.name}_F_02_mpi",oType: 'png',
-                        plotConf: {title: 'MPI-Test: Fortran version, opt: -O2',key: 'bot'})
-  data2plot= []
-  f03[0].each_with_index {|arySize,i|
-    data2plot << {x: f03[1][i][0],y: f03[1][i][1],title: "arraySize #{arySize}",style: 'linespoints lw 2'}
-  }
-  UnifiedPlot.linePlot(data2plot,oName: "#{t.name}_F_03_mpi",oType: 'png',
-                        plotConf: {title: 'MPI-Test: Fortran version, opt: -O3',key: 'bot'})
-  data2plot.clear
-  c02[0].each_with_index {|arySize,i|
-    data2plot << {x: c02[1][i][0],y: c02[1][i][1],title: "arraySize #{arySize}",style: 'linespoints lw 2'}
-  }
-  UnifiedPlot.linePlot(data2plot,oName: "#{t.name}_C_02_mpi",oType: 'png',
-                        plotConf: {title: 'MPI-Test: C version, opt: -O2',key: 'bot'})
-  data2plot.clear
-  c03[0].each_with_index {|arySize,i|
-    data2plot << {x: c03[1][i][0],y: c03[1][i][1],title: "arraySize #{arySize}",style: 'linespoints lw 2'}
-  }
-  pp data2plot
-  UnifiedPlot.linePlot(data2plot,oName: "#{t.name}_C_03_mpi",oType: 'png',
-                        plotConf: {title: 'MPI-Test: C version, opt: -O3',key: 'bot'})
-  data2plot.clear
 end
 task :checkHybrid => @checkTasks[:hybrid] do |t|
   pp @memRates
+  data = collectData(@memRates, @binDb)
+
+  f02 = data['F']['02'].transpose
+  f03 = data['F']['03'].transpose
+  c02 = data['C']['02'].transpose
+  c03 = data['C']['03'].transpose
+
+  hybridPlot(c02,'02','C',t.name)
+  hybridPlot(c03,'03','C',t.name)
+  hybridPlot(f02,'02','F',t.name)
+  hybridPlot(f03,'03','F',t.name)
 end
 task :check       => [:checkOmp,:checkMpi,:checkHybrid,:checkPlain]
 desc "Create a source tar-ball"
