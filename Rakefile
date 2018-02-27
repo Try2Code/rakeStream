@@ -180,7 +180,7 @@ end
 # openmp
 taskNameGen = lambda {|exe,omp,prefix| "#{prefix}_#{exe}_omp.eq.#{omp}"}
 @openmpOnly.each {|exe|
-  scalingList(@conf[:OMP_THREADS]).each {|omp|
+  scalingList(@conf[:OMP_THREADS].to_f).each {|omp|
     taskName = taskNameGen.call(exe,omp,'run')
     CLEAN.include(taskName)
 
@@ -192,7 +192,7 @@ taskNameGen = lambda {|exe,omp,prefix| "#{prefix}_#{exe}_omp.eq.#{omp}"}
 
     @checkTasks[:omp] << taskNameGen.call(exe,omp,'check')
     desc "Check results from #{exe}"
-    task taskNameGen.call(exe,omp,'check') do #=> taskName do
+    task taskNameGen.call(exe,omp,'check') => taskName do
       rate = File.open(taskName).read.chomp.to_f
       puts [rate,taskName].join("\t") if Rake.verbose
       (@memRates[exe] ||= []) << [omp,rate]
@@ -213,7 +213,7 @@ taskNameGen = lambda {|exe,mpi,prefix| "#{prefix}_#{exe}_mpi.eq.#{mpi}"}
 
     @checkTasks[:mpi] << taskNameGen.call(exe,mpi,'check')
     desc "Check results from #{exe} with mpi-taskName = #{mpi}"
-    task taskNameGen.call(exe,mpi,'check') do #=> taskName do
+    task taskNameGen.call(exe,mpi,'check') => taskName do
       rate = File.open(taskName).read.chomp.to_f
       puts [exe,mpi,rate].reverse.join("\t") if Rake.verbose
       (@memRates[exe] ||= []) << [mpi,rate]
@@ -224,7 +224,7 @@ taskNameGen = lambda {|exe,mpi,prefix| "#{prefix}_#{exe}_mpi.eq.#{mpi}"}
 taskNameGen = lambda {|exe,mpi,omp,prefix| "#{prefix}_#{exe}_mpi.eq.#{mpi}_omp.eq.#{omp}"}
 @hybrid.each {|exe|
   scalingList(@conf[:MPI_TASKS].to_f).each {|mpi|
-    scalingList(@conf[:OMP_THREADS]).each {|omp|
+    scalingList(@conf[:OMP_THREADS].to_f).each {|omp|
       taskName = taskNameGen.call(exe,mpi,omp, "run")
       CLEAN.include(taskName)
 
@@ -235,7 +235,7 @@ taskNameGen = lambda {|exe,mpi,omp,prefix| "#{prefix}_#{exe}_mpi.eq.#{mpi}_omp.e
 
       @checkTasks[:hybrid] << taskNameGen.call(exe,mpi,omp,'check')
       desc "Check results from hybrid run with #{exe}: mpi = #{mpi}, omp = #{omp}"
-      task taskNameGen.call(exe,mpi,omp,'check') do #=> taskName do
+      task taskNameGen.call(exe,mpi,omp,'check') => taskName do
         rate = File.open(taskName).read.chomp.to_f
         puts [exe,mpi,omp,rate].reverse.join("\t") if Rake.verbose
         (@memRates[exe] ||= []) << [mpi,omp,rate]
