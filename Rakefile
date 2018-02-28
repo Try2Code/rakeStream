@@ -86,10 +86,12 @@ BaseBins.each {|binary|
           desc "build binary: #{binaryName}"
           file binaryName  =>  [srcFile,'mysecond.o'] do |t|
             if 'C' == lang then
-              sh [comp ,@conf[:CPPFLAGS],flags.join(' ') ,srcFile,'-o',t.name].join(' ')
+              cmd = [comp ,@conf[:CPPFLAGS],flags.join(' ') ,srcFile,'-o',t.name].join(' ')
             else
-              sh [comp ,@conf[:CPPFLAGS],flags.join(' ') ,srcFile,' mysecond.o -o',t.name].join(' ')
+              cmd = [comp ,@conf[:CPPFLAGS],flags.join(' ') ,srcFile,' mysecond.o -o',t.name].join(' ')
             end
+            puts cmd.colorize(:blue)
+            sh cmd
           end
           CLEAN.include(binaryName)
           @allPrograms << binaryName
